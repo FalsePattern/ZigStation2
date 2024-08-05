@@ -1,0 +1,11 @@
+#include <tamtypes.h>
+#include <debug.h>
+#include <sifrpc.h>
+#include <stdio.h>
+#include <unistd.h>
+#include <kernel.h>
+#include <pthread.h>
+#include <gsKit.h>
+#include <gsInline.h>
+#include <dmaKit.h>
+#include <gsToolkit.h>
