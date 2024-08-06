@@ -1,1 +1,2 @@
-nix-shell --argstr run zls
+#!/bin/sh
+nix-shell --argstr run "sh -c 'zls $*'"
