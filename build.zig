@@ -4,30 +4,25 @@ pub fn build(b: *std.Build) !void {
     const target_ee = Processor.ee.target();
     const optimize_ee = processorOptimizeOptions(b, .ee, .safe);
 
-    const exe = b.addObject(.{
+    const ps2 = try Toolchain.fromEnv(b);
+
+    var pipeline = ps2.buildZigFile(b, .ee, .{
         .name = "example",
         .root_source_file = b.path("src/main.zig"),
         .target = target_ee,
         .optimize = optimize_ee,
         .link_libc = true,
-        .single_threaded = false,
-        .strip = false,
     });
-
-    const ps2 = try Toolchain.fromEnv(b);
 
     const translate_c = ps2.createTranslateC(b, .ee, b.path("src/c.h"), optimize_ee);
     translate_c.addIncludeDir(ps2.extras.gsKit.include);
 
-    exe.root_module.addImport("c", translate_c.createModule());
+    pipeline.rootModule().addImport("c", translate_c.createModule());
 
-    _, const compiled_obj = ps2.compileCFile(b, exe.getEmittedBin(), .ee, optimize_ee);
+    pipeline.addLibDir(ps2.extras.gsKit.resolve(b, "lib"));
+    pipeline.link(&.{"debug", "atomic", "gskit", "dmakit"});
 
-    var compile_elf, const compiled_elf = ps2.linkObjects(b, &.{compiled_obj}, .ee, optimize_ee);
-    compile_elf.addArgs(&.{ "-L", ps2.extras.gsKit.resolve(b, "lib") });
-    compile_elf.addArgs(&.{ "-ldebug", "-latomic", "-lgskit", "-ldmakit" });
-
-    const stripped_elf = ps2.stripElf(b, .ee, optimize_ee, compiled_elf);
+    const stripped_elf = ps2.stripElf(b, .ee, optimize_ee, pipeline.output_file);
 
     const install_file = b.addInstallFileWithDir(stripped_elf, .bin, "example.elf");
     b.getInstallStep().dependOn(&install_file.step);
@@ -36,8 +31,8 @@ pub fn build(b: *std.Build) !void {
 fn processorOptimizeOptions(b: *std.Build, proc: Processor, default: std.Build.ReleaseMode) std.builtin.OptimizeMode {
     if (b.option(
         std.builtin.OptimizeMode,
-        b.fmt("optimize_{}", .{@tagName(proc)}),
-        b.fmt("Prioritize performance, safety, or binary size for the {}", .{proc.friendlyName()}),
+        b.fmt("optimize_{s}", .{@tagName(proc)}),
+        b.fmt("Prioritize performance, safety, or binary size for the {s}", .{proc.friendlyName()}),
     )) |mode| {
         return mode;
     }
@@ -53,6 +48,13 @@ fn processorOptimizeOptions(b: *std.Build, proc: Processor, default: std.Build.R
 const Processor = enum {
     ee,
     iop,
+
+    pub fn ext(self: Processor) []const u8 {
+        return switch(self) {
+            .ee => "elf",
+            .iop => "irx",
+        };
+    }
 
     pub fn friendlyName(self: Processor) []const u8 {
         return switch(self) {
@@ -252,13 +254,13 @@ const Toolchain = struct {
         return cmd;
     }
 
-    pub fn compileCFile(self: Toolchain, b: *std.Build, input: std.Build.LazyPath, processor: Processor, optimize: std.builtin.OptimizeMode) struct{*std.Build.Step.Run, *std.Build.LazyPath} {
+    pub fn compileCFile(self: Toolchain, b: *std.Build, input: std.Build.LazyPath, processor: Processor, optimize: std.builtin.OptimizeMode) struct{*std.Build.Step.Run, std.Build.LazyPath} {
         var step = self.createCompileStep(b, processor, optimize);
         step.addArg("-c");
         step.addFileArg(input);
         step.addArg("-o");
         const output = step.addOutputFileArg("output.o");
-        return .{.step = step, .output = output};
+        return .{step, output};
     }
 
     pub fn createLinkStep(self: Toolchain, b: *std.Build, processor: Processor, optimize: std.builtin.OptimizeMode) *std.Build.Step.Run {
@@ -274,18 +276,14 @@ const Toolchain = struct {
         return cmd;
     }
 
-    pub fn linkObjects(self: Toolchain, b: *std.Build, inputs: []const std.Build.LazyPath, processor: Processor, optimize: std.builtin.OptimizeMode) struct{*std.Build.Step.Run, *std.Build.LazyPath} {
+    pub fn linkObjects(self: Toolchain, b: *std.Build, inputs: []const std.Build.LazyPath, processor: Processor, optimize: std.builtin.OptimizeMode) struct{*std.Build.Step.Run, std.Build.LazyPath} {
         var step = self.createLinkStep(b, processor, optimize);
         step.addArg("-o");
-        const ext = switch (processor) {
-            .ee => "elf",
-            .iop => "irx",
-        };
-        const output = step.addOutputFileArg(b.fmt("output.{}", .{ext}));
+        const output = step.addOutputFileArg(b.fmt("output.{s}", .{processor.ext()}));
         for (inputs) |input| {
-            step.addFileInput(input);
+            step.addFileArg(input);
         }
-        return .{.step = step, .output = output};
+        return .{step, output};
     }
 
     pub fn stripElf(self: Toolchain, b: *std.Build, processor: Processor, optimize: std.builtin.OptimizeMode, file: std.Build.LazyPath) std.Build.LazyPath {
@@ -296,11 +294,47 @@ const Toolchain = struct {
                 const strip_elf = b.addSystemCommand(&.{ dev.tool(b, "strip"), "-s" });
                 strip_elf.addFileArg(file);
                 strip_elf.addArg("-o");
-                const stripped_elf = strip_elf.addOutputFileArg("stripped.elf");
+                const stripped_elf = strip_elf.addOutputFileArg(b.fmt("stripped.{s}", .{processor.ext()}));
                 break :blk stripped_elf;
             },
         };
     }
+
+    pub fn buildZigFile(self: Toolchain, b: *std.Build, processor: Processor, options: std.Build.ObjectOptions) BuildPipeline {
+        const zig_to_c = b.addObject(options);
+
+        const object_step, const compiled_obj = self.compileCFile(b, zig_to_c.getEmittedBin(), processor, options.optimize);
+
+        const link_step, const linked_obj = self.linkObjects(b, &.{compiled_obj}, processor, options.optimize);
+
+        return .{
+            .zig_to_c_step = zig_to_c,
+            .object_step = object_step,
+            .link_step = link_step,
+            .output_file = linked_obj
+        };
+    }
+
+    pub const BuildPipeline = struct {
+        zig_to_c_step: *std.Build.Step.Compile,
+        object_step: *std.Build.Step.Run,
+        link_step: *std.Build.Step.Run,
+        output_file: std.Build.LazyPath,
+
+        pub fn rootModule(self: BuildPipeline) *std.Build.Module {
+            return &self.zig_to_c_step.root_module;
+        }
+
+        pub fn addLibDir(self: BuildPipeline, dir: []const u8) void {
+            self.link_step.addArgs(&.{"-L", dir});
+        }
+
+        pub fn link(self: BuildPipeline, libraries: []const []const u8) void {
+            for (libraries) |library| {
+                self.link_step.addArgs(&.{"-l", library});
+            }
+        }
+    };
 };
 
 const Dev = struct {
