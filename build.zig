@@ -1,14 +1,14 @@
 const std = @import("std");
 
 pub fn build(b: *std.Build) !void {
-    const target = Processor.ee.target();
-    const optimize = b.standardOptimizeOption(.{});
+    const target_ee = Processor.ee.target();
+    const optimize_ee = processorOptimizeOptions(b, .ee, .safe);
 
     const exe = b.addObject(.{
         .name = "example",
         .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
+        .target = target_ee,
+        .optimize = optimize_ee,
         .link_libc = true,
         .single_threaded = false,
         .strip = false,
@@ -16,33 +16,50 @@ pub fn build(b: *std.Build) !void {
 
     const ps2 = try Toolchain.fromEnv(b);
 
-    const translate_c = ps2.createTranslateC(b, .ee, b.path("src/c.h"), optimize);
+    const translate_c = ps2.createTranslateC(b, .ee, b.path("src/c.h"), optimize_ee);
     translate_c.addIncludeDir(ps2.extras.gsKit.include);
 
     exe.root_module.addImport("c", translate_c.createModule());
 
-    var compile_obj = ps2.createCompileStep(b, .ee, optimize);
-    compile_obj.addArg("-c");
-    compile_obj.addFileArg(exe.getEmittedBin());
-    compile_obj.addArg("-o");
-    const compiled_obj = compile_obj.addOutputFileArg("example.o");
+    _, const compiled_obj = ps2.compileCFile(b, exe.getEmittedBin(), .ee, optimize_ee);
 
-    var compile_elf = ps2.createLinkStep(b, .ee, optimize);
-    compile_elf.addFileArg(compiled_obj);
-    compile_elf.addArg("-o");
-    const compiled_elf = compile_elf.addOutputFileArg("example.elf");
+    var compile_elf, const compiled_elf = ps2.linkObjects(b, &.{compiled_obj}, .ee, optimize_ee);
     compile_elf.addArgs(&.{ "-L", ps2.extras.gsKit.resolve(b, "lib") });
     compile_elf.addArgs(&.{ "-ldebug", "-latomic", "-lgskit", "-ldmakit" });
 
-    const stripped_elf = ps2.stripElf(b, .ee, optimize, compiled_elf);
+    const stripped_elf = ps2.stripElf(b, .ee, optimize_ee, compiled_elf);
 
     const install_file = b.addInstallFileWithDir(stripped_elf, .bin, "example.elf");
     b.getInstallStep().dependOn(&install_file.step);
 }
 
+fn processorOptimizeOptions(b: *std.Build, proc: Processor, default: std.Build.ReleaseMode) std.builtin.OptimizeMode {
+    if (b.option(
+        std.builtin.OptimizeMode,
+        b.fmt("optimize_{}", .{@tagName(proc)}),
+        b.fmt("Prioritize performance, safety, or binary size for the {}", .{proc.friendlyName()}),
+    )) |mode| {
+        return mode;
+    }
+
+    return switch (default) {
+        .fast => .ReleaseFast,
+        .safe => .ReleaseSafe,
+        .small => .ReleaseSmall,
+        else => .Debug,
+    };
+}
+
 const Processor = enum {
     ee,
     iop,
+
+    pub fn friendlyName(self: Processor) []const u8 {
+        return switch(self) {
+            .ee => "Emotion Engine",
+            .iop => "I/O processor",
+        };
+    }
 
     pub fn macro(self: Processor) []const u8 {
         return switch (self) {
@@ -235,6 +252,15 @@ const Toolchain = struct {
         return cmd;
     }
 
+    pub fn compileCFile(self: Toolchain, b: *std.Build, input: std.Build.LazyPath, processor: Processor, optimize: std.builtin.OptimizeMode) struct{*std.Build.Step.Run, *std.Build.LazyPath} {
+        var step = self.createCompileStep(b, processor, optimize);
+        step.addArg("-c");
+        step.addFileArg(input);
+        step.addArg("-o");
+        const output = step.addOutputFileArg("output.o");
+        return .{.step = step, .output = output};
+    }
+
     pub fn createLinkStep(self: Toolchain, b: *std.Build, processor: Processor, optimize: std.builtin.OptimizeMode) *std.Build.Step.Run {
         const dev = self.dev.get(processor);
         var cmd = b.addSystemCommand(&.{
@@ -246,6 +272,20 @@ const Toolchain = struct {
         });
         cmd.addArgs(processor.defaultLinkArgs(optimize));
         return cmd;
+    }
+
+    pub fn linkObjects(self: Toolchain, b: *std.Build, inputs: []const std.Build.LazyPath, processor: Processor, optimize: std.builtin.OptimizeMode) struct{*std.Build.Step.Run, *std.Build.LazyPath} {
+        var step = self.createLinkStep(b, processor, optimize);
+        step.addArg("-o");
+        const ext = switch (processor) {
+            .ee => "elf",
+            .iop => "irx",
+        };
+        const output = step.addOutputFileArg(b.fmt("output.{}", .{ext}));
+        for (inputs) |input| {
+            step.addFileInput(input);
+        }
+        return .{.step = step, .output = output};
     }
 
     pub fn stripElf(self: Toolchain, b: *std.Build, processor: Processor, optimize: std.builtin.OptimizeMode, file: std.Build.LazyPath) std.Build.LazyPath {
