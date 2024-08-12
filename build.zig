@@ -2,30 +2,47 @@ const std = @import("std");
 
 pub fn build(b: *std.Build) !void {
     const target_ee = Processor.ee.target();
+    const target_iop = Processor.iop.target();
     const optimize_ee = processorOptimizeOptions(b, .ee, .safe);
+    const optimize_iop = processorOptimizeOptions(b, .iop, .fast);
 
     const ps2 = try Toolchain.fromEnv(b);
 
-    var pipeline = ps2.buildZigFile(b, .ee, .{
+    const pipeline_iop = ps2.buildIOPBinary(
+        b,
+        Toolchain.IOPParams.fromDir(b, b.path("src/iop")),
+        .{
+            .name = "hello",
+            .root_source_file = b.path("src/iop/hello.zig"),
+            .target = target_iop,
+            .optimize = optimize_iop,
+            .link_libc = true,
+        },
+    );
+
+    var pipeline_ee = ps2.buildEEBinary(b, .{
         .name = "example",
-        .root_source_file = b.path("src/main.zig"),
+        .root_source_file = b.path("src/ee/main.zig"),
         .target = target_ee,
         .optimize = optimize_ee,
         .link_libc = true,
     });
 
-    const translate_c = ps2.createTranslateC(b, .ee, b.path("src/c.h"), optimize_ee);
-    translate_c.addIncludeDir(ps2.extras.gsKit.include);
+    const translate_c_ee = ps2.createTranslateC(b, .ee, b.path("src/ee/c.h"), optimize_ee);
+    translate_c_ee.addIncludeDir(ps2.extras.gsKit.include);
 
-    pipeline.rootModule().addImport("c", translate_c.createModule());
+    pipeline_ee.rootModule().addImport("c_ee", translate_c_ee.createModule());
 
-    pipeline.addLibDir(ps2.extras.gsKit.resolve(b, "lib"));
-    pipeline.link(&.{"debug", "atomic", "gskit", "dmakit"});
+    pipeline_ee.addLibDir(ps2.extras.gsKit.resolve(b, "lib"));
+    pipeline_ee.link(&.{ "debug", "atomic", "gskit", "dmakit" });
 
-    const stripped_elf = ps2.stripElf(b, .ee, optimize_ee, pipeline.output_file);
+    const stripped_elf = ps2.stripElf(b, .ee, optimize_ee, pipeline_ee.output_file);
 
-    const install_file = b.addInstallFileWithDir(stripped_elf, .bin, "example.elf");
-    b.getInstallStep().dependOn(&install_file.step);
+    const install = b.getInstallStep();
+    install.dependOn(&b.addInstallFileWithDir(stripped_elf, .bin, "example.elf").step);
+    install.dependOn(&b.addInstallFileWithDir(pipeline_iop.output_file, .bin, "hello.irx").step);
+    install.dependOn(&b.addInstallFileWithDir(.{ .cwd_relative = ps2.dev.iop.sdk.resolve(b, "irx/libsd.irx") }, .bin, "libsd.irx").step);
+    install.dependOn(&b.addInstallFileWithDir(.{ .cwd_relative = ps2.dev.iop.sdk.resolve(b, "irx/ps2snd.irx") }, .bin, "ps2snd.irx").step);
 }
 
 fn processorOptimizeOptions(b: *std.Build, proc: Processor, default: std.Build.ReleaseMode) std.builtin.OptimizeMode {
@@ -50,14 +67,14 @@ const Processor = enum {
     iop,
 
     pub fn ext(self: Processor) []const u8 {
-        return switch(self) {
+        return switch (self) {
             .ee => "elf",
             .iop => "irx",
         };
     }
 
     pub fn friendlyName(self: Processor) []const u8 {
-        return switch(self) {
+        return switch (self) {
             .ee => "Emotion Engine",
             .iop => "I/O processor",
         };
@@ -91,7 +108,7 @@ const Processor = enum {
     pub fn defaultCompileArgs(self: Processor, optimize: std.builtin.OptimizeMode) []const []const u8 {
         return switch (self) {
             .ee => blk: {
-                const base = [_][]const u8{ "-D_EE", "-gdwarf-2", "-gz", "-Wno-incompatible-pointer-types", "-Wno-address-of-packed-member" };
+                const base = [_][]const u8{ "-D_EE", "-fno-builtin", "-gdwarf-2", "-gz", "-Wno-incompatible-pointer-types", "-Wno-address-of-packed-member" };
                 break :blk switch (optimize) {
                     .Debug => &(base ++ [0][]const u8{}),
                     .ReleaseSafe => &(base ++ [_][]const u8{ "-O2", "-G0" }),
@@ -100,33 +117,33 @@ const Processor = enum {
                 };
             },
             .iop => blk: {
-                const base = [_][]const u8{ "-D_IOP", "-fno-builtin", "-msoft-float", "-mno-explicit-relocs", "-gdwarf-2", "-gz", "-Wno-incompatible-pointer-types", "-Wno-address-of-packed-member"};
+                const base = [_][]const u8{ "-D_IOP", "-fno-builtin", "-msoft-float", "-mno-explicit-relocs", "-gdwarf-2", "-gz", "-Wno-incompatible-pointer-types", "-Wno-address-of-packed-member" };
                 break :blk switch (optimize) {
                     .Debug => &(base ++ [0][]const u8{}),
                     .ReleaseSafe => &(base ++ [_][]const u8{ "-O2", "-G0" }),
                     .ReleaseFast => &(base ++ [_][]const u8{ "-O2", "-G0", "-s" }),
                     .ReleaseSmall => &(base ++ [_][]const u8{ "-Os", "-G0", "-s" }),
                 };
-            }
+            },
         };
     }
 
     pub fn defaultLinkArgs(self: Processor, optimize: std.builtin.OptimizeMode) []const []const u8 {
         return switch (self) {
             .ee => blk: {
-                const base = [_][]const u8{"-Wl,-zmax-page-size=128", "-lm", "-lcdvd", "-lpthread", "-lpthreadglue", "-lcglue", "-lkernel"};
+                const base = [_][]const u8{ "-Wl,-zmax-page-size=128", "-lm", "-lcdvd", "-lpthread", "-lpthreadglue", "-lcglue", "-lkernel" };
                 break :blk switch (optimize) {
                     .Debug => &(base ++ [_][]const u8{"-lg"}),
-                    .ReleaseSafe, .ReleaseFast => &(base ++ [_][]const u8{"-O2", "-G0", "-lc"}),
-                    .ReleaseSmall => &(base ++ [_][]const u8{"-Os", "-G0", "-lc"}),
+                    .ReleaseSafe, .ReleaseFast => &(base ++ [_][]const u8{ "-O2", "-G0", "-lc" }),
+                    .ReleaseSmall => &(base ++ [_][]const u8{ "-Os", "-G0", "-lc" }),
                 };
             },
             .iop => blk: {
-                const base = [_][]const u8{"-D_IOP", "-fno-builtin", "-gdwarf-2", "-gz", "-msoft-float", "-mno-explicit-relocs", "-nostdlib"};
-                break :blk switch(optimize) {
+                const base = [_][]const u8{ "-D_IOP", "-fno-builtin", "-gdwarf-2", "-gz", "-msoft-float", "-mno-explicit-relocs", "-nostdlib", "-s" };
+                break :blk switch (optimize) {
                     .Debug => &(base ++ [0][]const u8{}),
-                    .ReleaseSafe, .ReleaseFast => &(base ++ [_][]const u8{"-O2", "-G0"}),
-                    .ReleaseSmall => &(base ++ [_][]const u8{"-Os", "-G0"}),
+                    .ReleaseSafe, .ReleaseFast => &(base ++ [_][]const u8{ "-O2", "-G0" }),
+                    .ReleaseSmall => &(base ++ [_][]const u8{ "-Os", "-G0" }),
                 };
             },
         };
@@ -238,52 +255,83 @@ const Toolchain = struct {
             .target = processor.target(),
         });
         translate_c.defineCMacro(processor.macro(), null);
-        translate_c.addIncludeDir(dev.stdlibIncludePath(b).?);
+        if (dev.stdlibIncludePath(b)) |include| {
+            translate_c.addIncludeDir(include);
+        }
         translate_c.addIncludeDir(dev.sdk.include);
         translate_c.addIncludeDir(self.extras.common.include);
         return translate_c;
     }
-
-    pub fn createCompileStep(self: Toolchain, b: *std.Build, processor: Processor, optimize: std.builtin.OptimizeMode) *std.Build.Step.Run {
+    pub fn createPureCCompileStep(self: Toolchain, b: *std.Build, processor: Processor, optimize: std.builtin.OptimizeMode) *std.Build.Step.Run {
         const dev = self.dev.get(processor);
         var cmd = b.addSystemCommand(&.{
             dev.tool(b, "gcc"),
         });
         cmd.addArgs(processor.defaultCompileArgs(optimize));
-        cmd.addArgs(&.{"-I", b.graph.zig_lib_directory.path.?});
+        cmd.addArgs(&.{ "-I", b.graph.zig_lib_directory.path.? });
+        cmd.addArgs(&.{ "-I", dev.sdk.include });
+        cmd.addArgs(&.{ "-I", self.extras.common.include });
         return cmd;
     }
 
-    pub fn compileCFile(self: Toolchain, b: *std.Build, input: std.Build.LazyPath, processor: Processor, optimize: std.builtin.OptimizeMode) struct{*std.Build.Step.Run, std.Build.LazyPath} {
-        var step = self.createCompileStep(b, processor, optimize);
+    pub fn compilePureCFile(self: Toolchain, b: *std.Build, input: std.Build.LazyPath, processor: Processor, optimize: std.builtin.OptimizeMode) struct { *std.Build.Step.Run, std.Build.LazyPath } {
+        var step = self.createPureCCompileStep(b, processor, optimize);
         step.addArg("-c");
         step.addFileArg(input);
         step.addArg("-o");
         const output = step.addOutputFileArg("output.o");
-        return .{step, output};
+        return .{ step, output };
+    }
+
+
+    pub fn createTranslatedCompileStep(self: Toolchain, b: *std.Build, processor: Processor, optimize: std.builtin.OptimizeMode) *std.Build.Step.Run {
+        const dev = self.dev.get(processor);
+        var cmd = b.addSystemCommand(&.{
+            dev.tool(b, "gcc"),
+        });
+        cmd.addArgs(processor.defaultCompileArgs(optimize));
+        cmd.addArgs(&.{ "-I", b.graph.zig_lib_directory.path.? });
+        if (processor == .iop) {
+            var d = b.addWriteFile("signal.h", "\n");
+            cmd.addArg("-I");
+            cmd.addDirectoryArg(d.getDirectory());
+        }
+        return cmd;
+    }
+
+    pub fn compileTranslatedCFile(self: Toolchain, b: *std.Build, input: std.Build.LazyPath, processor: Processor, optimize: std.builtin.OptimizeMode) struct { *std.Build.Step.Run, std.Build.LazyPath } {
+        var step = self.createTranslatedCompileStep(b, processor, optimize);
+        step.addArg("-c");
+        step.addFileArg(input);
+        step.addArg("-o");
+        const output = step.addOutputFileArg("output.o");
+        return .{ step, output };
     }
 
     pub fn createLinkStep(self: Toolchain, b: *std.Build, processor: Processor, optimize: std.builtin.OptimizeMode) *std.Build.Step.Run {
         const dev = self.dev.get(processor);
-        var cmd = b.addSystemCommand(&.{
-            dev.tool(b, "gcc"),
-            "-T",
-            dev.sdk.resolve(b, "startup/linkfile"),
-            "-L",
-            dev.sdk.resolve(b, "lib"),
-        });
+        var cmd = switch (processor) {
+            .ee => b.addSystemCommand(&.{
+                dev.tool(b, "gcc"),
+                "-T",
+                dev.sdk.resolve(b, "startup/linkfile"),
+                "-L",
+                dev.sdk.resolve(b, "lib"),
+            }),
+            .iop => b.addSystemCommand(&.{dev.tool(b, "gcc")}),
+        };
         cmd.addArgs(processor.defaultLinkArgs(optimize));
         return cmd;
     }
 
-    pub fn linkObjects(self: Toolchain, b: *std.Build, inputs: []const std.Build.LazyPath, processor: Processor, optimize: std.builtin.OptimizeMode) struct{*std.Build.Step.Run, std.Build.LazyPath} {
+    pub fn linkObjects(self: Toolchain, b: *std.Build, inputs: []const std.Build.LazyPath, processor: Processor, optimize: std.builtin.OptimizeMode) struct { *std.Build.Step.Run, std.Build.LazyPath } {
         var step = self.createLinkStep(b, processor, optimize);
         step.addArg("-o");
         const output = step.addOutputFileArg(b.fmt("output.{s}", .{processor.ext()}));
         for (inputs) |input| {
             step.addFileArg(input);
         }
-        return .{step, output};
+        return .{ step, output };
     }
 
     pub fn stripElf(self: Toolchain, b: *std.Build, processor: Processor, optimize: std.builtin.OptimizeMode, file: std.Build.LazyPath) std.Build.LazyPath {
@@ -300,38 +348,113 @@ const Toolchain = struct {
         };
     }
 
-    pub fn buildZigFile(self: Toolchain, b: *std.Build, processor: Processor, options: std.Build.ObjectOptions) BuildPipeline {
+    pub const IOPParams = struct {
+        imports: std.Build.LazyPath,
+        exports: std.Build.LazyPath,
+        imports_header: std.Build.LazyPath,
+
+        pub fn fromDir(b: *std.Build, dir: std.Build.LazyPath) IOPParams {
+            const imports = dir.path(b, "imports.lst");
+            const exports = dir.path(b, "exports.tab");
+            const imports_header = dir.path(b, "irx_imports.h");
+            return .{
+                .imports = imports,
+                .exports = exports,
+                .imports_header = imports_header,
+            };
+        }
+    };
+
+    pub fn buildIOPBinary(self: Toolchain, b: *std.Build, params: IOPParams, options: std.Build.ObjectOptions) BuildPipelineIOP {
+        const irx_imports = self.createTranslateC(b, .iop, params.imports_header, options.optimize);
+
         const zig_to_c = b.addObject(options);
 
-        const object_step, const compiled_obj = self.compileCFile(b, zig_to_c.getEmittedBin(), processor, options.optimize);
+        zig_to_c.root_module.addImport("irx_imports", irx_imports.createModule());
 
-        const link_step, const linked_obj = self.linkObjects(b, &.{compiled_obj}, processor, options.optimize);
+        const object_step, const compiled_obj = self.compileTranslatedCFile(b, zig_to_c.getEmittedBin(), .iop, options.optimize);
+
+        //intermediate
+        const irx_cgen = b.addExecutable(.{
+            .name = "irx_cgen",
+            .root_source_file = b.path("tools/irx_cgen.zig"),
+            .target = b.graph.host,
+        });
+
+        const imports_gen = b.addRunArtifact(irx_cgen);
+        imports_gen.addArg("imports");
+        imports_gen.addFileArg(params.imports);
+        const build_imports = imports_gen.addOutputFileArg("build-imports.c");
+        imports_gen.addFileArg(params.imports_header);
+
+        const exports_gen = b.addRunArtifact(irx_cgen);
+        exports_gen.addArg("exports");
+        exports_gen.addFileArg(params.exports);
+        const build_exports = exports_gen.addOutputFileArg("build-exports.c");
+
+        const imports_step, const imports_obj = self.compilePureCFile(b, build_imports, .iop, options.optimize);
+        const exports_step, const exports_obj = self.compilePureCFile(b, build_exports, .iop, options.optimize);
+
+        imports_step.addArg("-fno-toplevel-reorder");
+        exports_step.addArg("-fno-toplevel-reorder");
+
+        const link_step, const linked_obj = self.linkObjects(b, &.{ compiled_obj, imports_obj, exports_obj }, .iop, options.optimize);
 
         return .{
             .zig_to_c_step = zig_to_c,
             .object_step = object_step,
             .link_step = link_step,
-            .output_file = linked_obj
+            .output_file = linked_obj,
         };
     }
-
-    pub const BuildPipeline = struct {
+    pub const BuildPipelineIOP = struct {
         zig_to_c_step: *std.Build.Step.Compile,
         object_step: *std.Build.Step.Run,
         link_step: *std.Build.Step.Run,
         output_file: std.Build.LazyPath,
 
-        pub fn rootModule(self: BuildPipeline) *std.Build.Module {
+        pub fn rootModule(self: BuildPipelineIOP) *std.Build.Module {
             return &self.zig_to_c_step.root_module;
         }
 
-        pub fn addLibDir(self: BuildPipeline, dir: []const u8) void {
-            self.link_step.addArgs(&.{"-L", dir});
+        pub fn addLibDir(self: BuildPipelineIOP, dir: []const u8) void {
+            self.link_step.addArgs(&.{ "-L", dir });
         }
 
-        pub fn link(self: BuildPipeline, libraries: []const []const u8) void {
+        pub fn link(self: BuildPipelineIOP, libraries: []const []const u8) void {
             for (libraries) |library| {
-                self.link_step.addArgs(&.{"-l", library});
+                self.link_step.addArgs(&.{ "-l", library });
+            }
+        }
+    };
+
+    pub fn buildEEBinary(self: Toolchain, b: *std.Build, options: std.Build.ObjectOptions) BuildPipelineEE {
+        const zig_to_c = b.addObject(options);
+
+        const object_step, const compiled_obj = self.compileTranslatedCFile(b, zig_to_c.getEmittedBin(), .ee, options.optimize);
+
+        const link_step, const linked_obj = self.linkObjects(b, &.{compiled_obj}, .ee, options.optimize);
+
+        return .{ .zig_to_c_step = zig_to_c, .object_step = object_step, .link_step = link_step, .output_file = linked_obj };
+    }
+
+    pub const BuildPipelineEE = struct {
+        zig_to_c_step: *std.Build.Step.Compile,
+        object_step: *std.Build.Step.Run,
+        link_step: *std.Build.Step.Run,
+        output_file: std.Build.LazyPath,
+
+        pub fn rootModule(self: BuildPipelineEE) *std.Build.Module {
+            return &self.zig_to_c_step.root_module;
+        }
+
+        pub fn addLibDir(self: BuildPipelineEE, dir: []const u8) void {
+            self.link_step.addArgs(&.{ "-L", dir });
+        }
+
+        pub fn link(self: BuildPipelineEE, libraries: []const []const u8) void {
+            for (libraries) |library| {
+                self.link_step.addArgs(&.{ "-l", library });
             }
         }
     };
@@ -349,9 +472,12 @@ const Dev = struct {
             .root = b.fmt("{s}/{s}", .{ base, p.suffix() }),
         };
     }
-    
+
     pub fn tool(self: Dev, b: *std.Build, tool_name: []const u8) []u8 {
-        return b.pathJoin(&.{self.root, "bin", b.fmt("{s}-{s}", .{self.processor.toolPrefix(), tool_name},)});
+        return b.pathJoin(&.{ self.root, "bin", b.fmt(
+            "{s}-{s}",
+            .{ self.processor.toolPrefix(), tool_name },
+        ) });
     }
 
     pub fn stdlibIncludePath(self: Dev, b: *std.Build) ?[]const u8 {

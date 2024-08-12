@@ -1,5 +1,5 @@
 const std = @import("std");
-const c = @import("c");
+const c = @import("c_ee");
 pub fn _main(argc: c_int, argv: [*c][*c]u8) callconv(.C) c_int {
     _ = argc;
     _ = argv;
@@ -43,7 +43,7 @@ fn gskitDemo() void {
 
     c.gsKit_mode_switch(gsGlobal, c.GS_PERSISTENT);
 
-    const quad = [_:.{}]c.gsPrimPoint {
+    const quad = [_:.{}]c.gsPrimPoint{
         .{
             .rgbaq = c.color_to_RGBAQ(0xFF, 0x00, 0x00, 0xFF, 0),
             .xyz2 = c.vertex_to_XYZ2(gsGlobal, 200, 200, 0),
@@ -82,19 +82,20 @@ fn gskitDemo() void {
     }
 }
 
-
 fn main() !i32 {
-    gskitDemo();
+    // gskitDemo();
     c.init_scr();
     c.scr_clear();
     c.scr_setCursor(0);
-    try screen_writer.print("Hello from ZIG!\n", .{});
-    _ = c.sleep(5);
-    try screen_writer.print("And now we'll do 100 + 50 on a signed 8 bit int...\n", .{});
-    _ = c.sleep(5);
-    var x: i8 = 100;
-    x += 50;
-    try screen_writer.print("You should never see this: {}", .{x});
+    var ret: c_int = undefined;
+    ret = c.SifLoadModule("host:hello.irx", 0, null);
+    if (ret < 0) {
+        try screen_writer.print("Failed to load host:hello.irx ({})\n", .{ret});
+        _ = c.SleepThread();
+    }
+    _ = c.printf("Hello from zig EE!\n");
+    try screen_writer.print("Hello from zig EE! (on your screen!)\n", .{});
+    _ = c.SleepThread();
     return 0;
 }
 
@@ -115,8 +116,8 @@ pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
         buf[0] = char;
         c.scr_printf(&buf);
     }
-    _ = c.sleep(10);
-    c.Exit(1);
+    _ = c.SleepThread();
+    unreachable;
 }
 const ScreenCtx = struct {
     pub fn write(_: *ScreenCtx, bytes: []const u8) ScreenError!usize {

@@ -2,6 +2,7 @@
 #include <debug.h>
 #include <sifrpc.h>
 #include <stdio.h>
+#include <sio.h>
 #include <unistd.h>
 #include <kernel.h>
 #include <pthread.h>
@@ -10,3 +11,4 @@
 #include <dmaKit.h>
 #include <gsToolkit.h>
 #include <time.h>
+#include <loadfile.h>
