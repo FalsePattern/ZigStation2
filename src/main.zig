@@ -23,7 +23,7 @@ fn thread_main(_: ?*anyopaque) u32 {
     return 1;
 }
 
-fn main() !i32 {
+fn gskitDemo() void {
     const Black = c.GS_SETREG_RGBAQ(0x00, 0x00, 0x00, 0x00, 0x00);
 
     const gsGlobal: *c.gsGlobal = @ptrCast(c.gsKit_init_global_custom(c.GS_RENDER_QUEUE_OS_POOLSIZE, c.GS_RENDER_QUEUE_PER_POOLSIZE));
@@ -42,7 +42,7 @@ fn main() !i32 {
     c.gsKit_init_screen(gsGlobal);
 
     c.gsKit_mode_switch(gsGlobal, c.GS_PERSISTENT);
-    
+
     const quad = [_:.{}]c.gsPrimPoint {
         .{
             .rgbaq = c.color_to_RGBAQ(0xFF, 0x00, 0x00, 0xFF, 0),
@@ -72,13 +72,29 @@ fn main() !i32 {
     c.gsKit_clear(gsGlobal, Black);
     c.gsKit_prim_list_triangle_gouraud_3d(gsGlobal, quad.len, &quad);
 
-    while (true) {
+    var start: c.time_t = undefined;
+    var now: c.time_t = undefined;
+    _ = c.time(&start);
+    now = start;
+    while (c.difftime(c.time(&now), start) < 5) {
         c.gsKit_queue_exec(gsGlobal);
         c.gsKit_sync_flip(gsGlobal);
     }
+}
 
-    _ = c.sleep(60);
 
+fn main() !i32 {
+    gskitDemo();
+    c.init_scr();
+    c.scr_clear();
+    c.scr_setCursor(0);
+    try screen_writer.print("Hello from ZIG!\n", .{});
+    _ = c.sleep(5);
+    try screen_writer.print("And now we'll do 100 + 50 on a signed 8 bit int...\n", .{});
+    _ = c.sleep(5);
+    var x: i8 = 100;
+    x += 50;
+    try screen_writer.print("You should never see this: {}", .{x});
     return 0;
 }
 
