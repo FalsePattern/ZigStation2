@@ -41,8 +41,6 @@ pub fn build(b: *std.Build) !void {
     const install = b.getInstallStep();
     install.dependOn(&b.addInstallFileWithDir(stripped_elf, .bin, "example.elf").step);
     install.dependOn(&b.addInstallFileWithDir(pipeline_iop.output_file, .bin, "hello.irx").step);
-    install.dependOn(&b.addInstallFileWithDir(.{ .cwd_relative = ps2.dev.iop.sdk.resolve(b, "irx/libsd.irx") }, .bin, "libsd.irx").step);
-    install.dependOn(&b.addInstallFileWithDir(.{ .cwd_relative = ps2.dev.iop.sdk.resolve(b, "irx/ps2snd.irx") }, .bin, "ps2snd.irx").step);
 }
 
 fn processorOptimizeOptions(b: *std.Build, proc: Processor, default: std.Build.ReleaseMode) std.builtin.OptimizeMode {
