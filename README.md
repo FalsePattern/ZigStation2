@@ -43,6 +43,7 @@ do different things depending on which commit you're on.
 - `shell.nix` - For NixOS users. A shell with the PS2DEV and PS2SDK env vars, and an FHS with the PS2DEV dependencies.
 You probably have your own already if you got this far.
 - `zls` - Also for NixOS users. Launches the `zls` executable from PATH inside the `shell.nix` file's FHS.
+- `zig` - Ditto, runs `zig` in the same FHS as the `zls` one.
 
 ## Future goals
 
