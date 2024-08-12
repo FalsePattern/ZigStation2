@@ -8,10 +8,20 @@ toolchain and [PS2SDK](https://github.com/ps2dev/ps2sdk).
 - Zig 0.14.0 (tested with `0.14.0-dev.839+a931bfada`)
 - PS2SDK and PS2DEV environment variables with a relatively recent build of the toolchain (`mips64r5900el-ps2-elf-gcc` works, `ee-gcc` doesn't)
 
-## Notes
+## Tested on
 
-- This has only been tested on pcsx2 2.0 for now, i'll be able to test on real hardware in the upcoming weeks though.
-  (I have a slim SCPH-75004 with emulated IOP, so I can't fully vouch for the IOP code when I get to that)
+- compiled EE code has been tested on:
+  - pcsx2 2.0
+  - SCPH-75004
+
+compiled IOP code has not been tested yet.
+
+Planned testing:
+
+- SCPH-70004, primarily due to the original IOP.
+
+I don't have any non-slim PS2s on hand, but feel free to test the example elf file this repo compiles on your own consoles,
+and please report back whether it works on not!
 
 ## Limitations
 
