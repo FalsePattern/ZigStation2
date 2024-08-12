@@ -11,16 +11,17 @@ toolchain and [PS2SDK](https://github.com/ps2dev/ps2sdk).
 ## Tested on
 
 - compiled EE code has been tested on:
-  - pcsx2 2.0
-  - SCPH-75004
+  - pcsx2 2.0 (working)
+  - SCPH-75004 (working)
 
-compiled IOP code has not been tested yet.
+- compiled IOP code has been tested on:
+  - SCPH-75004 (working)
 
 Planned testing:
 
 - SCPH-70004, primarily due to the original IOP.
 
-I don't have any non-slim PS2s on hand, but feel free to test the example elf file this repo compiles on your own consoles,
+I don't have any other PS2 models on hand, but feel free to test the example elf file this repo compiles on your own consoles,
 and please report back whether it works on not!
 
 ## Limitations
