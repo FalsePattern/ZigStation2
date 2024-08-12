@@ -65,7 +65,7 @@ const Processor = enum {
     pub fn target(self: Processor) std.Build.ResolvedTarget {
         return switch (self) {
             .ee => ee_target.get(),
-            .iop => @panic("IOP target not yet implemented!"),
+            .iop => iop_target.get(),
         };
     }
 
@@ -80,7 +80,15 @@ const Processor = enum {
                     .ReleaseSmall => &(base ++ [_][]const u8{ "-Os", "-G0", "-s" }),
                 };
             },
-            .iop => @panic("IOP target not yet implemented!"),
+            .iop => blk: {
+                const base = [_][]const u8{ "-D_IOP", "-fno-builtin", "-msoft-float", "-mno-explicit-relocs", "-gdwarf-2", "-gz", "-Wno-incompatible-pointer-types", "-Wno-address-of-packed-member"};
+                break :blk switch (optimize) {
+                    .Debug => &(base ++ [0][]const u8{}),
+                    .ReleaseSafe => &(base ++ [_][]const u8{ "-O2", "-G0" }),
+                    .ReleaseFast => &(base ++ [_][]const u8{ "-O2", "-G0", "-s" }),
+                    .ReleaseSmall => &(base ++ [_][]const u8{ "-Os", "-G0", "-s" }),
+                };
+            }
         };
     }
 
@@ -94,7 +102,14 @@ const Processor = enum {
                     .ReleaseSmall => &(base ++ [_][]const u8{"-Os", "-G0", "-lc"}),
                 };
             },
-            .iop => @panic("IOP target not yet implemented!"),
+            .iop => blk: {
+                const base = [_][]const u8{"-D_IOP", "-fno-builtin", "-gdwarf-2", "-gz", "-msoft-float", "-mno-explicit-relocs", "-nostdlib"};
+                break :blk switch(optimize) {
+                    .Debug => &(base ++ [0][]const u8{}),
+                    .ReleaseSafe, .ReleaseFast => &(base ++ [_][]const u8{"-O2", "-G0"}),
+                    .ReleaseSmall => &(base ++ [_][]const u8{"-Os", "-G0"}),
+                };
+            },
         };
     }
 
@@ -107,6 +122,16 @@ const Processor = enum {
     }
 
     var ee_target = LazyTarget.of(init: {
+        var tgt: std.Target.Query = .{};
+        tgt.cpu_arch = .mipsel;
+        tgt.os_tag = .freestanding;
+        tgt.ofmt = .c;
+        tgt.cpu_model = .{ .explicit = &std.Target.mips.cpu.mips2 };
+        tgt.cpu_features_add.addFeature(@intFromEnum(std.Target.mips.Feature.mips2));
+        break :init tgt;
+    });
+
+    var iop_target = LazyTarget.of(init: {
         var tgt: std.Target.Query = .{};
         tgt.cpu_arch = .mipsel;
         tgt.os_tag = .freestanding;
